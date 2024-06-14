@@ -1,0 +1,77 @@
+name: Build Flying-Webapp
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  checkoutandsetupUnity:
+    name: Checkout Code
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        targetPlatform:
+          - WebGL # WebGL
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Cache Library
+        uses: actions/cache@v3
+        with:
+          path: Library
+          key: Library-${{ matrix.targetPlatform }}
+          restore-keys: Library-
+
+      - name: Setup Unity
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath:
+          targetPlatform: ${{ matrix.targetPlatform }}
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Build-${{ matrix.targetPlatform }}
+          path: build/${{ matrix.targetPlatform }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy to S3
+        run: |
+            aws s3 sync build/ s3://${{ vars.S3_BUCKET }}/github_demos/project_flying/
+
+  returnLicense:
+    needs: checkoutandsetupUnity
+    name: Return Unity license
+    runs-on: ubuntu-latest
+    steps:
+      - name: Return license
+        uses: game-ci/unity-return-license@v2
+        if: always()
+
+  deploymentSummary:
+    needs: returnLicense
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show Deployment Summary
+        shell: pwsh
+        run: |
+          write-output "Deployment Completed in AWS Account S3 Bucket: ${{ vars.S3_BUCKET }} " >> $env:GITHUB_STEP_SUMMARY
